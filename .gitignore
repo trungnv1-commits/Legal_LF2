@@ -1,0 +1,114 @@
+# ==============================================
+# Python (Backend)
+# ==============================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.pytest_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+*.pyc
+.venv/
+venv/
+env/
+
+# Local SQLite DB (BE)
+legal-workflow-be/legal.db
+legal-workflow-be/legal.db-shm
+legal-workflow-be/legal.db-wal
+legal-workflow-be/_writer.py
+legal-workflow-be/uploads/
+
+# ==============================================
+# Node / Frontend
+# ==============================================
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ==============================================
+# Environment files (secrets)
+# ==============================================
+.env
+.env.local
+.env.*.local
+# Keep .env.production (has staging URL, public)
+
+# ==============================================
+# Editor / OS
+# ==============================================
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+Thumbs.db
+
+# ==============================================
+# Build outputs
+# ==============================================
+build/
+*.tsbuildinfo
+
+# ==============================================
+# Claude Code / dev tooling
+# ==============================================
+.claude/
+.serena/
+.cursor/
+
+# ==============================================
+# Dev / debug scripts at repo root (one-off helpers)
+# ==============================================
+/fe_patch.py
+/fe_patch2.py
+/fix_notify_fe.py
+/fix_pe.py
+/fix_tnt.py
+/update_ap_v8.py
+/update_v9.py
+/_patch.py
+/legal-workflow-fe/_write_tdp.js
+/legal-workflow-fe/write_login.py
+/legal-workflow-fe/src/pages/_write_tdp.js
+
+# Old AP versions (keep only v7+v9 latest if needed; keeping all md files)
+# (no exclusion — markdown docs are useful for handoff)
+
+# ==============================================
+# Cloud / deployment artifacts
+# ==============================================
+*.tar.gz
+.gcloudignore
+gcloud-credentials.json
+*-credentials.json
+service-account*.json
+
+# External skill repo (separate git history)
+ui-ux-pro-max-skill/
+
+# Vault / secrets (Google Cloud SA, API keys)
+T0. Setup Environment/vault_2.md
+vault*.md
+*.credentials.json
+*-sa-key.json

@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+@theme {
+  /* Design System Colors - Apero HR blue tone */
+  --color-navy-50: #eff6ff;
+  --color-navy-100: #dbeafe;
+  --color-navy-200: #bfdbfe;
+  --color-navy-300: #93c5fd;
+  --color-navy-400: #60a5fa;
+  --color-navy-500: #3b82f6;
+  --color-navy-600: #2563eb;
+  --color-navy-700: #1d4ed8;
+  --color-navy-800: #1e40af;
+  --color-navy-900: #1e3a8a;
+  --color-navy-950: #172554;
+
+  --color-amber-cta-50: #fdf8ef;
+  --color-amber-cta-100: #f9ebd0;
+  --color-amber-cta-200: #f3d7a1;
+  --color-amber-cta-300: #edc372;
+  --color-amber-cta-400: #e7af43;
+  --color-amber-cta-500: #d49a1e;
+  --color-amber-cta-600: #B45309;
+  --color-amber-cta-700: #904208;
+  --color-amber-cta-800: #6c3206;
+  --color-amber-cta-900: #482104;
+  --color-amber-cta-950: #241102;
+
+  --color-surface: #F8FAFC;
+
+  /* Typography - Arial */
+  --font-heading: Arial, Helvetica, sans-serif;
+  --font-body: Arial, Helvetica, sans-serif;
+}
+
+/* Apply base typography */
+body {
+  font-family: var(--font-body);
+  background-color: var(--color-surface);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading);
+}
+
+/* Focus states for keyboard navigation */
+*:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

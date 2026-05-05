@@ -1,0 +1,691 @@
+# Trademark Check API Documentation
+
+## Overview
+
+The Agent-Legal API provides an **async trademark check** service. You submit a trademark check request and poll for results. The system searches across 6 data sources in parallel, uses AI to assess risk, and returns a structured report.
+
+**Base URL Dev:** `https://agent-legal.coderhanoi.id.vn`
+
+---
+
+## Workflow
+
+```
+Client                              API Server
+  |                                     |
+  |  1. POST /chat                      |
+  |  { message: "/trademark-check ..." }
+  |------------------------------------>|
+  |                                     |  Save job (Redis)
+  |                                     |  Start background processing
+  |  2. Response (immediate)            |
+  |  { jobId, threadId, message }       |
+  |<------------------------------------|
+  |                                     |
+  |  3. GET /status/:jobId              |  (poll every 5-10 seconds)
+  |------------------------------------>|
+  |  { status: "pending" }              |
+  |<------------------------------------|
+  |                                     |
+  |  4. GET /status/:jobId              |
+  |------------------------------------>|
+  |  { status: "processing" }           |
+  |<------------------------------------|
+  |                                     |
+  |  5. GET /status/:jobId              |
+  |------------------------------------>|
+  |  { status: "completed", result: {...} }
+  |<------------------------------------|
+```
+
+**Typical duration:** 7-10 minutes for a full trademark check.
+
+---
+
+## Endpoints
+
+### POST /chat
+
+Submit a trademark check request. Returns immediately with a `jobId` for polling.
+
+**Request:**
+
+```json
+{
+  "message": "/trademark-check { JSON payload }",
+  "threadId": "optional-uuid"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `message` | string | **Yes** | Must start with `/trademark-check` followed by a JSON payload |
+| `threadId` | string | No | Reuse an existing thread. New UUID generated if omitted |
+
+**Response (200):**
+
+```json
+{
+  "jobId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "threadId": "f9e8d7c6-b5a4-3210-fedc-ba0987654321",
+  "message": {
+    "type": "text",
+    "data": "Tôi đang xử lý. Hãy sử dụng API interval ping /status/<jobId> để kiểm tra trạng thái. Lưu ý jobId sẽ có thời gian tồn tại trong vòng 24h."
+  }
+}
+```
+
+**Response (400):**
+
+```json
+{
+  "error": "Field 'message' is required and must be a string"
+}
+```
+
+---
+
+### GET /status/:jobId
+
+Poll for the status and result of a trademark check job.
+
+**Response (200) — pending:**
+
+```json
+{
+  "jobId": "a1b2c3d4-...",
+  "threadId": "f9e8d7c6-...",
+  "status": "pending",
+  "createdAt": "2026-04-16T10:00:00.000Z"
+}
+```
+
+**Response (200) — processing:**
+
+```json
+{
+  "jobId": "a1b2c3d4-...",
+  "threadId": "f9e8d7c6-...",
+  "status": "processing",
+  "createdAt": "2026-04-16T10:00:00.000Z"
+}
+```
+
+**Response (200) — completed:**
+
+```json
+{
+  "jobId": "a1b2c3d4-...",
+  "threadId": "f9e8d7c6-...",
+  "status": "completed",
+  "createdAt": "2026-04-16T10:00:00.000Z",
+  "updatedAt": "2026-04-16T10:08:30.000Z",
+  "result": {
+    "results": [ ... ]
+  }
+}
+```
+
+**Response (200) — failed:**
+
+```json
+{
+  "jobId": "a1b2c3d4-...",
+  "threadId": "f9e8d7c6-...",
+  "status": "failed",
+  "createdAt": "2026-04-16T10:00:00.000Z",
+  "updatedAt": "2026-04-16T10:05:00.000Z",
+  "error": "Error message describing the failure"
+}
+```
+
+**Response (404):**
+
+```json
+{
+  "error": "Job not found"
+}
+```
+
+> Job records expire after **24 hours**. After that, polling returns 404.
+
+---
+
+### GET /health
+
+Health check endpoint.
+
+**Response (200):** `{ "status": "ok" }`
+
+---
+
+## Job Status Lifecycle
+
+```
+pending → processing → completed
+                     → failed
+```
+
+| Status | Meaning |
+|--------|---------|
+| `pending` | Job saved, waiting to start processing |
+| `processing` | Background pipeline is running (search + AI analysis) |
+| `completed` | Done. Full report available in `result` field |
+| `failed` | Error occurred. See `error` field for details |
+
+---
+
+## Input Schema — TrademarkCheckInput
+
+The JSON payload inside `/trademark-check { ... }`:
+
+```json
+{
+  "appNames": [
+    {
+      "appName": "MyApp",
+      "subtitle": "AI Photo Editor"
+    }
+  ],
+  "platform": "ios",
+  "shortDescs": ["A powerful AI photo editing app"],
+  "longDescs": ["MyApp uses advanced AI to transform your photos..."],
+  "iconUrls": ["https://example.com/icon.png"],
+  "features": [
+    {
+      "keywords": "one-tap enhance",
+      "imagePath": "https://example.com/feature1.png"
+    }
+  ]
+}
+```
+
+### Field Reference
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `appNames` | Array of [AppName](#appname) | **Yes** | App names to check. At least 1 required. |
+| `platform` | `"ios"` or `"android"` | **Yes** | Target platform for store search |
+| `shortDescs` | Array of string | No | Short descriptions. Max 50 chars (iOS) or 80 chars (Android) each |
+| `longDescs` | Array of string | No | Long descriptions. Max 4000 chars each |
+| `iconUrls` | Array of string | No | App icon URLs. Must end in `.png` or `.svg` |
+| `features` | Array of [Feature](#feature) | No | Feature screenshots + keywords to check |
+
+### AppName
+
+```json
+{
+  "appName": "MyApp",
+  "subtitle": "AI Photo Editor"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `appName` | string | **Yes** | App name. Max 30 characters |
+| `subtitle` | string | No | Subtitle/tagline. Searches combined as `"MyApp (AI Photo Editor)"` |
+
+### Feature
+
+```json
+{
+  "keywords": "one-tap enhance, background removal",
+  "imagePath": "https://example.com/feature-screenshot.png"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `keywords` | string | No | Feature description keywords |
+| `imagePath` | string | **Yes** | Screenshot URL for image-based trademark search |
+
+---
+
+## Output Schema — TrademarkCheckReport
+
+The `result` field in the completed response:
+
+```json
+{
+  "results": [
+    {
+      "field": "appName",
+      "label": "VibeHair (Trendy AI Hairstyles)",
+      "overallRisk": "High",
+      "overallReasoning": "USPTO_NAME phát hiện 20 nhãn hiệu Live...",
+      "overallConfidence": 93,
+      "sourceRisks": [ ... ],
+      "recommendations": [ ... ],
+      "keywordRisks": [ ... ]
+    }
+  ]
+}
+```
+
+### ItemRiskResult
+
+Each entry in `results` corresponds to one input item (one appName, one shortDesc, etc.).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `field` | `"appName"` \| `"shortDesc"` \| `"longDesc"` \| `"iconUrl"` \| `"feature"` | Which input field this result covers |
+| `label` | string | The original input value (e.g., `"VibeHair (Trendy AI Hairstyles)"`) |
+| `overallRisk` | `"High"` \| `"Medium"` \| `"Low"` | Highest risk across all sources |
+| `overallReasoning` | string | AI-generated summary in Vietnamese explaining the risk assessment |
+| `overallConfidence` | number (0-100) | Confidence score. High risk → ~90, Medium → ~60, Low → ~95 |
+| `sourceRisks` | Array of [SourceRisk](#sourcerisk) | Per-source risk breakdown |
+| `recommendations` | Array of string | Actionable recommendations in Vietnamese |
+| `keywordRisks` | Array of [KeywordRisk](#keywordrisk) | Per-keyword risk breakdown (only for `shortDesc`, `longDesc`, `feature` fields) |
+
+### SourceRisk
+
+Risk assessment from each data source:
+
+```json
+{
+  "source": "USPTO_NAME",
+  "appName": "VibeHair (Trendy AI Hairstyles)",
+  "query": "VibeHair (Trendy AI Hairstyles)",
+  "niceClasses": [9, 42],
+  "riskLevel": "High",
+  "reasoning": "Phát hiện 20 nhãn hiệu Live trong IC 009/042...",
+  "hits": [ ... ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source` | string | See [Data Sources](#data-sources) below |
+| `appName` | string | Only for name-based sources (`*_NAME`). The full label searched |
+| `query` | string | The actual query string sent to the source |
+| `niceClasses` | Array of number | Nice Classification groups searched (typically `[9, 42]`) |
+| `riskLevel` | `"High"` \| `"Medium"` \| `"Low"` | Risk level from this specific source |
+| `reasoning` | string | AI-generated explanation in Vietnamese |
+| `hits` | Array | Matching records found. Max 20 per source. See [Hit Types](#hit-types) |
+
+### KeywordRisk
+
+Per-keyword risk from description/feature analysis:
+
+```json
+{
+  "keyword": "AI hairstyle",
+  "source": "WIPO_SHORT",
+  "riskLevel": "Medium",
+  "reasoning": "Tìm thấy 3 nhãn hiệu tương tự chứa từ khóa 'AI'..."
+}
+```
+
+---
+
+## Data Sources
+
+The system searches 6 sources in parallel, then synthesizes results:
+
+### Name-based sources (one search per appName entry)
+
+| Source | What it searches | Returns |
+|--------|-----------------|---------|
+| `WIPO_NAME` | WIPO Madrid Monitor — name search per app label | Trademark registrations (brand, holder, status, Nice classes) |
+| `USPTO_NAME` | USPTO trademark database — name search per app label | US trademarks (wordmark, owner, status, international classes) |
+| `VietnamIP` | Vietnam IP Office — name search per app label | Vietnam trademarks (name, holder, status, Nice classes) |
+| `StoreSearch` | Google Play + App Store — name search per app label | Existing apps (title, developer, installs, reviews, score) |
+
+### Keyword-based sources (search extracted keywords)
+
+| Source | What it searches | Returns |
+|--------|-----------------|---------|
+| `WIPO_SHORT` / `WIPO_LONG` / `WIPO_FEATURE` | WIPO Madrid Monitor — keyword search for short/long desc/feature | Trademark registrations matching keywords |
+| `USPTO_SHORT` / `USPTO_LONG` / `USPTO_FEATURE` | USPTO — keyword search for short/long desc/feature | US trademarks matching keywords |
+
+### Image-based sources (if iconUrls provided)
+
+| Source | What it searches | Returns |
+|--------|-----------------|---------|
+| `WIPOImage` | WIPO image trademark search (mock in v1) | Image trademark matches |
+| `GoogleReverseImage` | Google reverse image search (mock in v1) | Visually similar images |
+
+---
+
+## Hit Types
+
+### TrademarkSearchHit (WIPO, USPTO, VietnamIP)
+
+```json
+{
+  "id": "US12345678",
+  "brandName": ["ExampleBrand"],
+  "holder": ["Example Corp"],
+  "registrationNumber": "1234567",
+  "status": "Live",
+  "niceClasses": [9, 42],
+  "country": "US",
+  "registrationDate": "2020-01-15"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique record ID |
+| `brandName` | Array of string | Trademark name(s) |
+| `holder` | Array of string | Trademark owner(s) |
+| `registrationNumber` | string | Registration number (if registered) |
+| `status` | string | Status: `Live`, `Pending`, `Registered`, `Expired`, `Cancelled`, etc. |
+| `niceClasses` | Array of number | Nice Classification groups |
+| `country` | string | Country code |
+| `registrationDate` | string | Registration date (YYYY-MM-DD) |
+
+### StoreSearchHit (StoreSearch)
+
+```json
+{
+  "appId": "com.example.myapp",
+  "title": "Example App",
+  "developer": "Example Inc",
+  "url": "https://play.google.com/store/apps/details?id=com.example.myapp",
+  "score": 4.5,
+  "icon": "https://example.com/icon.png",
+  "platform": "android",
+  "matchedKeyword": "MyApp",
+  "minInstalls": 500000,
+  "reviews": 12345
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `appId` | string | Store app ID |
+| `title` | string | App title on the store |
+| `developer` | string | Developer name |
+| `url` | string | Store listing URL |
+| `score` | number or null | Rating score (1-5) |
+| `icon` | string or null | App icon URL |
+| `platform` | `"android"` or `"ios"` | Which store |
+| `matchedKeyword` | string | Which keyword matched this result |
+| `minInstalls` | number or null | Minimum install count (Google Play) |
+| `reviews` | number or null | Review count |
+
+### ImageSearchHit (WIPOImage, GoogleReverseImage)
+
+```json
+{
+  "imageUrl": "https://example.com/trademark-image.png",
+  "sourceBrand": "SimilarBrand",
+  "holder": "Brand Owner",
+  "similarity": "similar",
+  "niceClasses": [9, 42]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `imageUrl` | string | URL of the matching image |
+| `sourceBrand` | string | Brand name of the match |
+| `holder` | string | Trademark holder |
+| `similarity` | `"identical"` \| `"highly_similar"` \| `"similar"` \| `"different"` | Visual similarity score |
+| `niceClasses` | Array of number | Nice Classification groups |
+
+---
+
+## Risk Levels
+
+| Level | Meaning | Confidence | Action |
+|-------|---------|------------|--------|
+| **High** | Conflicting trademark found. Name or logo is identical/similar to an existing registered mark in relevant Nice classes. | ~90 | Do NOT launch. Consult legal team. Consider renaming. |
+| **Medium** | Partial overlap found. Similar name exists but in different classes, or weak similarity. | ~60 | Proceed with caution. Legal review recommended. Consider adding disclaimers or modifying the name. |
+| **Low** | No conflicting trademarks found. | ~95 | Safe to proceed. Standard monitoring recommended. |
+
+---
+
+## Examples
+
+### Example 1: Basic app name check
+
+**Request:**
+
+```bash
+curl -X POST http://localhost:3000/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "/trademark-check {\"appNames\":[{\"appName\":\"PhotoAI\"}],\"platform\":\"ios\"}"
+  }'
+```
+
+**Immediate response:**
+
+```json
+{
+  "jobId": "550e8400-e29b-41d4-a716-446655440000",
+  "threadId": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+  "message": {
+    "type": "text",
+    "data": "Tôi đang xử lý. Hãy sử dụng API interval ping /status/550e8400-e29b-41d4-a716-446655440000 để kiểm tra trạng thái..."
+  }
+}
+```
+
+**Poll (every 5-10 seconds):**
+
+```bash
+curl http://localhost:3000/status/550e8400-e29b-41d4-a716-446655440000
+```
+
+**Completed response (after ~8 min):**
+
+```json
+{
+  "jobId": "550e8400-e29b-41d4-a716-446655440000",
+  "threadId": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+  "status": "completed",
+  "createdAt": "2026-04-16T10:00:00.000Z",
+  "updatedAt": "2026-04-16T10:08:30.000Z",
+  "result": {
+    "results": [
+      {
+        "field": "appName",
+        "label": "PhotoAI",
+        "overallRisk": "High",
+        "overallReasoning": "USPTO_NAME phát hiện 15 nhãn hiệu Live liên quan đến 'photo' và 'AI'. WIPO_NAME cũng tìm thấy 8 kết quả tương tự.",
+        "overallConfidence": 92,
+        "sourceRisks": [
+          {
+            "source": "WIPO_NAME",
+            "appName": "PhotoAI",
+            "query": "PhotoAI",
+            "niceClasses": [9, 42],
+            "riskLevel": "Medium",
+            "reasoning": "Tìm thấy 8 nhãn hiệu có chứa 'Photo' hoặc 'AI' trong Nice classes 9/42.",
+            "hits": [
+              {
+                "id": "WIPO-12345",
+                "brandName": ["PHOTO AI PRO"],
+                "holder": ["TechCorp GmbH"],
+                "status": "Active",
+                "niceClasses": [9, 42],
+                "country": "DE"
+              }
+            ]
+          },
+          {
+            "source": "USPTO_NAME",
+            "appName": "PhotoAI",
+            "query": "PhotoAI",
+            "niceClasses": [9, 42],
+            "riskLevel": "High",
+            "reasoning": "Phát hiện 15 nhãn hiệu Live trong IC 009/042 chứa từ khóa 'photo' hoặc 'AI'.",
+            "hits": [
+              {
+                "id": "US-9876543",
+                "brandName": ["PHOTO.AI"],
+                "holder": ["PhotoAI Inc"],
+                "registrationNumber": "5678901",
+                "status": "Live",
+                "niceClasses": [9, 42],
+                "country": "US",
+                "registrationDate": "2023-06-15"
+              }
+            ]
+          },
+          {
+            "source": "VietnamIP",
+            "appName": "PhotoAI",
+            "query": "PhotoAI",
+            "niceClasses": [9, 42],
+            "riskLevel": "Low",
+            "reasoning": "Không tìm thấy nhãn hiệu xung đột trong cơ sở dữ liệu Việt Nam.",
+            "hits": []
+          },
+          {
+            "source": "StoreSearch",
+            "appName": "PhotoAI",
+            "query": "PhotoAI",
+            "niceClasses": [9],
+            "riskLevel": "Medium",
+            "reasoning": "Tìm thấy 3 ứng dụng có tên tương tự trên App Store, 1 ứng dụng có 500K+ lượt tải.",
+            "hits": [
+              {
+                "appId": "com.example.photoai",
+                "title": "PhotoAI - AI Photo Editor",
+                "developer": "PhotoAI Inc",
+                "url": "https://apps.apple.com/app/photoai",
+                "score": 4.7,
+                "icon": "https://example.com/icon.png",
+                "platform": "ios",
+                "matchedKeyword": "PhotoAI",
+                "minInstalls": null,
+                "reviews": 15000
+              }
+            ]
+          }
+        ],
+        "recommendations": [
+          "Thay đổi tên ứng dụng để tránh xung đột với nhãn hiệu 'PHOTO.AI' đã đăng ký tại USPTO.",
+          "Thêm tiền tố/suffix để tạo tính phân biệt, ví dụ: 'PhotoAI Studio' hoặc 'MyPhotoAI'.",
+          "Tham khảo ý kiến luật sư Sở hữu trí tuệ trước khi ra mắt."
+        ]
+      }
+    ]
+  }
+}
+```
+
+### Example 2: Multiple apps with descriptions and icons
+
+**Request:**
+
+```bash
+curl -X POST http://localhost:3000/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "/trademark-check {\"appNames\":[{\"appName\":\"VibeHair\",\"subtitle\":\"Trendy AI Hairstyles\"},{\"appName\":\"VibeHair\",\"subtitle\":\"AI Hair Reinvented\"}],\"platform\":\"android\",\"iconUrls\":[\"https://example.com/icon.png\"]}"
+  }'
+```
+
+Each `appName` entry gets its own independent search. The report will contain separate `results` entries for each:
+
+- `result[0]` → `"VibeHair (Trendy AI Hairstyles)"`
+- `result[1]` → `"VibeHair (AI Hair Reinvented)"`
+
+### Example 3: Full check with all fields
+
+```bash
+curl -X POST http://localhost:3000/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "/trademark-check {\"appNames\":[{\"appName\":\"SalonSketch\",\"subtitle\":\"Virtual Hair Sketcher\"}],\"platform\":\"ios\",\"shortDescs\":[\"AI-powered virtual hairstyle try-on\"],\"longDescs\":[\"SalonSketch uses advanced AI to let users try on hundreds of hairstyles virtually\"],\"iconUrls\":[\"https://example.com/salonsketch-icon.png\"],\"features\":[{\"keywords\":\"virtual hairstyle try-on, hair color changer\",\"imagePath\":\"https://example.com/feature1.png\"}]}"
+  }'
+```
+
+This triggers all 6 data sources plus keyword-based searches, producing a comprehensive report.
+
+---
+
+## Integration Guide
+
+### Recommended polling interval
+
+- Poll every **5-10 seconds**
+- Average completion time: **7-10 minutes**
+- Job expires after **24 hours**
+
+### Pseudocode
+
+```python
+import requests
+import time
+
+BASE_URL = "http://localhost:3000"
+
+def check_trademark(payload: dict) -> dict:
+    # 1. Submit request
+    resp = requests.post(f"{BASE_URL}/chat", json={
+        "message": f"/trademark-check {json.dumps(payload)}"
+    })
+    data = resp.json()
+    job_id = data["jobId"]
+
+    # 2. Poll until completed or failed
+    while True:
+        time.sleep(5)
+        status = requests.get(f"{BASE_URL}/status/{job_id}").json()
+
+        if status["status"] == "completed":
+            return status["result"]
+        elif status["status"] == "failed":
+            raise Exception(status["error"])
+
+# Usage
+result = check_trademark({
+    "appNames": [{"appName": "MyApp"}],
+    "platform": "ios"
+})
+
+for item in result["results"]:
+    print(f"{item['label']}: {item['overallRisk']}")
+```
+
+### Non-trademark messages
+
+If the message does **NOT** start with `/trademark-check`, the API processes it synchronously and returns the result immediately:
+
+```bash
+curl -X POST http://localhost:3000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Analyze this contract clause for risks: ..."}'
+```
+
+**Response (synchronous):**
+
+```json
+{
+  "response": {
+    "type": "json",
+    "data": { ... }
+  },
+  "threadId": "uuid"
+}
+```
+
+---
+
+## Error Handling
+
+| HTTP Status | When | Body |
+|------------|------|------|
+| 200 | Success | See response schemas above |
+| 400 | Missing or invalid `message` field | `{ "error": "Field 'message' is required..." }` |
+| 404 | Job not found or expired (24h TTL) | `{ "error": "Job not found" }` |
+| 500 | Internal server error | `{ "error": "Internal server error" }` |
+
+---
+
+## Nice Classification
+
+The system searches in **Nice Classes 9 and 42** by default:
+
+| Class | Covers |
+|-------|--------|
+| **9** | Software, downloadable applications, computer programs |
+| **42** | SaaS, cloud services, technology services |
+
+Store search uses **Class 9** only (software category).
