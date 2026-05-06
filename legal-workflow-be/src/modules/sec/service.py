@@ -19,6 +19,14 @@ EXCEPTION_USERS = [
         cdt_allowed="MyCDT", krf_level=3, cdt_1="HQ1",
         cdt="SHQ1_Headquarters1 I TTE_Tech I I TTES_Legal", role_legal="Submitters",
     ),
+    # Wave 7 LSP Bridge — service account self-auth (added 2026-05-06)
+    SecPermission(
+        emp_code="F.LSP", emp_name="LSP Bridge Service Account",
+        google_email="ai-690@fp-a-project.iam.gserviceaccount.com",
+        empgrade="LX1", empsec=SecLevel.SEC1, pt_allowed="MyPT",
+        cdt_allowed="MyCDT", krf_level=3, cdt_1="HQ1",
+        cdt="SHQ1_Headquarters1 I TTE_Tech I I TTES_Legal", role_legal="Submitters",
+    ),
 ]
 
 
