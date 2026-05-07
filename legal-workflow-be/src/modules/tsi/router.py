@@ -1,10 +1,12 @@
 """TSI router -- task creation and management APIs."""
 
-from fastapi import APIRouter, Depends
+import json
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import List, Optional
 from src.auth.dependencies import get_current_user
 from src.common.response import send_success, send_error
+from src.config.database import get_db
 from src.modules.tsi.schema import TSICreateRequest
 from src.modules.tsi.service import create_task_l1
 
@@ -197,6 +199,106 @@ async def reject_task(tsi_id: str, req: RejectRequest, user: dict = Depends(get_
         data=updated_tsi.model_dump(mode="json"),
         message="Task rejected",
     )
+
+
+# =====================================================================
+# Wave 7 LSP Bridge — search by metadata + bulk status query
+# Routes MUST be declared BEFORE @router.get("/{tsi_id}") so FastAPI
+# matches "/search" and "/batch-status" before the wildcard handler.
+# =====================================================================
+
+
+class BatchStatusRequest(BaseModel):
+    tsi_ids: List[str] = Field(..., max_length=100)
+
+
+@router.get("/search")
+async def search_tasks_by_metadata(
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """Wave 7 LSP Bridge — search TSI by metadata.lsp_sr_id (idempotency check).
+
+    Query: ?metadata.lsp_sr_id=<value>
+    Returns up to 10 most-recent TSI matching the LSP correlation id.
+    """
+    target_sr_id = request.query_params.get("metadata.lsp_sr_id")
+    if not target_sr_id:
+        return send_success(data=[], message="No metadata.lsp_sr_id query param")
+
+    db = get_db()
+    cursor = db.execute(
+        "SELECT tsi_id, tsi_code, status, metadata, updated_at "
+        "FROM tsi WHERE metadata IS NOT NULL "
+        "ORDER BY created_at DESC"
+    )
+    results = []
+    for row in cursor.fetchall():
+        raw_meta = row["metadata"] if isinstance(row, dict) or hasattr(row, "keys") else row[3]
+        if not raw_meta:
+            continue
+        try:
+            meta = json.loads(raw_meta) if isinstance(raw_meta, str) else raw_meta
+        except (ValueError, TypeError):
+            continue
+        if meta.get("lsp_sr_id") != target_sr_id:
+            continue
+        results.append({
+            "tsi_id": row["tsi_id"],
+            "tsi_code": row["tsi_code"],
+            "status": row["status"],
+            "metadata": meta,
+            "updated_at": str(row["updated_at"]) if row["updated_at"] else None,
+        })
+        if len(results) >= 10:
+            break
+    return send_success(data=results, message=f"Found {len(results)} TSI(s)")
+
+
+@router.post("/batch-status")
+async def batch_status(
+    body: BatchStatusRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Wave 7 LSP Bridge — bulk status query (cap 100 IDs per call).
+
+    Body: {"tsi_ids": ["tsi-001", "tsi-002", ...]}
+    Returns 1 record per requested id (found=False if missing).
+    """
+    if not body.tsi_ids:
+        return send_success(data=[], message="Empty tsi_ids")
+
+    ids = body.tsi_ids[:100]
+    db = get_db()
+    placeholders = ",".join(f":id_{i}" for i in range(len(ids)))
+    params = {f"id_{i}": tsi_id for i, tsi_id in enumerate(ids)}
+    cursor = db.execute(
+        f"SELECT tsi_id, status, updated_at FROM tsi WHERE tsi_id IN ({placeholders})",
+        params,
+    )
+    found = {}
+    for row in cursor.fetchall():
+        found[row["tsi_id"]] = {
+            "status": row["status"],
+            "updated_at": str(row["updated_at"]) if row["updated_at"] else None,
+        }
+    results = []
+    for tsi_id in ids:
+        if tsi_id in found:
+            results.append({
+                "tsi_id": tsi_id,
+                "status": found[tsi_id]["status"],
+                "updated_at": found[tsi_id]["updated_at"],
+                "found": True,
+            })
+        else:
+            results.append({
+                "tsi_id": tsi_id,
+                "status": None,
+                "updated_at": None,
+                "found": False,
+            })
+    return send_success(data=results, message=f"{len(results)} TSI(s) queried")
 
 
 @router.get("/{tsi_id}")
