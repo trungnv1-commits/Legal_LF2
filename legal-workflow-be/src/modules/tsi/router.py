@@ -417,6 +417,112 @@ async def reassign_task(tsi_id: str, req: dict, user: dict = Depends(get_current
     return send_success(data={"tsi_id": tsi_id, "old_emp": old_emp, "new_emp": new_emp_code}, message="Task reassigned")
 
 
+@router.patch("/{tsi_id}/status")
+async def update_task_status(tsi_id: str, req: dict, user: dict = Depends(get_current_user)):
+    """LSP Bridge endpoint — update TSI status from external system (LF4/LSP).
+
+    Body: {status: <TSIStatus>, reason?: str}
+
+    Differs from /approve, /reject (which run workflow navigation logic):
+    this is a flat status setter for cross-system sync. Validates status enum,
+    updates DB, emits TSEV UPDATE event with old→new status delta.
+
+    Use case: LSP user marks SR as DONE → LSP calls this to push status to LF2.
+    """
+    from src.modules.tsi.repository import tsi_repository
+    from src.modules.tsi.model import TSIStatus
+    from src.modules.tsev.model import TSEV, TSEVEventType
+    from src.modules.tsev.repository import tsev_repository
+    from uuid import uuid4
+    import json
+
+    new_status = req.get("status")
+    reason = req.get("reason", "")
+    if not new_status:
+        return send_error(message="status is required", status_code=400)
+
+    try:
+        TSIStatus(new_status)
+    except ValueError:
+        valid = [s.value for s in TSIStatus]
+        return send_error(message=f"Invalid status '{new_status}'. Valid: {valid}", status_code=400)
+
+    tsi = tsi_repository.get_by_id(tsi_id)
+    if tsi is None:
+        return send_error(message=f"TSI '{tsi_id}' not found", status_code=404)
+
+    old_status = tsi.status
+    if str(old_status) == new_status:
+        return send_success(data={"tsi_id": tsi_id, "status": new_status, "changed": False},
+                            message="No change")
+
+    tsi_repository.update(tsi_id, {"status": new_status})
+
+    tsev = TSEV(
+        tsev_id=f"TSEV-{uuid4().hex[:8]}",
+        tsi_id=tsi_id,
+        event_type=TSEVEventType.UPDATE,
+        emp_id=user.get("emp_code", "SYSTEM"),
+        event_data=json.dumps({
+            "field": "status", "old": str(old_status), "new": new_status,
+            "reason": reason, "source": "lsp_bridge",
+        }),
+    )
+    tsev_repository.create(tsev)
+
+    return send_success(
+        data={"tsi_id": tsi_id, "status": new_status, "changed": True},
+        message=f"Status changed: {old_status} -> {new_status}",
+    )
+
+
+@router.post("/{tsi_id}/cancel")
+async def cancel_task(tsi_id: str, req: dict, user: dict = Depends(get_current_user)):
+    """LSP Bridge endpoint — cancel a TSI from external system (LF4/LSP).
+
+    Body: {reason?: str}
+
+    Sets status=CANCELLED + emits UPDATE event with cancel context.
+    Idempotent: re-cancel returns 'No change' instead of error.
+    """
+    from src.modules.tsi.repository import tsi_repository
+    from src.modules.tsi.model import TSIStatus
+    from src.modules.tsev.model import TSEV, TSEVEventType
+    from src.modules.tsev.repository import tsev_repository
+    from uuid import uuid4
+    import json
+
+    reason = req.get("reason", "Cancelled by LSP user")
+
+    tsi = tsi_repository.get_by_id(tsi_id)
+    if tsi is None:
+        return send_error(message=f"TSI '{tsi_id}' not found", status_code=404)
+
+    if str(tsi.status) == TSIStatus.CANCELLED.value:
+        return send_success(data={"tsi_id": tsi_id, "status": "CANCELLED", "changed": False},
+                            message="Already cancelled")
+
+    old_status = tsi.status
+    tsi_repository.update(tsi_id, {"status": TSIStatus.CANCELLED.value})
+
+    tsev = TSEV(
+        tsev_id=f"TSEV-{uuid4().hex[:8]}",
+        tsi_id=tsi_id,
+        event_type=TSEVEventType.UPDATE,
+        emp_id=user.get("emp_code", "SYSTEM"),
+        event_data=json.dumps({
+            "field": "status", "old": str(old_status), "new": "CANCELLED",
+            "reason": reason, "source": "lsp_bridge", "action": "cancel",
+        }),
+    )
+    tsev_repository.create(tsev)
+
+    return send_success(
+        data={"tsi_id": tsi_id, "status": "CANCELLED", "changed": True, "reason": reason},
+        message=f"TSI cancelled: {old_status} -> CANCELLED",
+    )
+
+
 @router.put("/{tsi_id}/metadata")
 async def update_metadata(tsi_id: str, metadata: dict, user: dict = Depends(get_current_user)):
     """Update task metadata (LF240 additional fields)."""
