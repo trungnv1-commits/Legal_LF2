@@ -451,8 +451,9 @@ async def update_task_status(tsi_id: str, req: dict, user: dict = Depends(get_cu
     if tsi is None:
         return send_error(message=f"TSI '{tsi_id}' not found", status_code=404)
 
-    old_status = tsi.status
-    if str(old_status) == new_status:
+    # Normalize old_status to string value (Pydantic Enum may serialize as 'TSIStatus.X')
+    old_status_str = old_status.value if hasattr(old_status, "value") else str(old_status).replace("TSIStatus.", "")
+    if old_status_str == new_status:
         return send_success(data={"tsi_id": tsi_id, "status": new_status, "changed": False},
                             message="No change")
 
@@ -464,7 +465,7 @@ async def update_task_status(tsi_id: str, req: dict, user: dict = Depends(get_cu
         event_type=TSEVEventType.UPDATE,
         emp_id=user.get("emp_code", "SYSTEM"),
         event_data=json.dumps({
-            "field": "status", "old": str(old_status), "new": new_status,
+            "field": "status", "old": old_status_str, "new": new_status,
             "reason": reason, "source": "lsp_bridge",
         }),
     )
@@ -472,7 +473,7 @@ async def update_task_status(tsi_id: str, req: dict, user: dict = Depends(get_cu
 
     return send_success(
         data={"tsi_id": tsi_id, "status": new_status, "changed": True},
-        message=f"Status changed: {old_status} -> {new_status}",
+        message=f"Status changed: {old_status_str} -> {new_status}",
     )
 
 
@@ -498,11 +499,13 @@ async def cancel_task(tsi_id: str, req: dict, user: dict = Depends(get_current_u
     if tsi is None:
         return send_error(message=f"TSI '{tsi_id}' not found", status_code=404)
 
-    if str(tsi.status) == TSIStatus.CANCELLED.value:
+    old_status = tsi.status
+    old_status_str = old_status.value if hasattr(old_status, "value") else str(old_status).replace("TSIStatus.", "")
+
+    if old_status_str == TSIStatus.CANCELLED.value:
         return send_success(data={"tsi_id": tsi_id, "status": "CANCELLED", "changed": False},
                             message="Already cancelled")
 
-    old_status = tsi.status
     tsi_repository.update(tsi_id, {"status": TSIStatus.CANCELLED.value})
 
     tsev = TSEV(
@@ -511,7 +514,7 @@ async def cancel_task(tsi_id: str, req: dict, user: dict = Depends(get_current_u
         event_type=TSEVEventType.UPDATE,
         emp_id=user.get("emp_code", "SYSTEM"),
         event_data=json.dumps({
-            "field": "status", "old": str(old_status), "new": "CANCELLED",
+            "field": "status", "old": old_status_str, "new": "CANCELLED",
             "reason": reason, "source": "lsp_bridge", "action": "cancel",
         }),
     )
@@ -519,7 +522,7 @@ async def cancel_task(tsi_id: str, req: dict, user: dict = Depends(get_current_u
 
     return send_success(
         data={"tsi_id": tsi_id, "status": "CANCELLED", "changed": True, "reason": reason},
-        message=f"TSI cancelled: {old_status} -> CANCELLED",
+        message=f"TSI cancelled: {old_status_str} -> CANCELLED",
     )
 
 
