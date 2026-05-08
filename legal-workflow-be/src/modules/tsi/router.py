@@ -452,6 +452,7 @@ async def update_task_status(tsi_id: str, req: dict, user: dict = Depends(get_cu
         return send_error(message=f"TSI '{tsi_id}' not found", status_code=404)
 
     # Normalize old_status to string value (Pydantic Enum may serialize as 'TSIStatus.X')
+    old_status = tsi.status
     old_status_str = old_status.value if hasattr(old_status, "value") else str(old_status).replace("TSIStatus.", "")
     if old_status_str == new_status:
         return send_success(data={"tsi_id": tsi_id, "status": new_status, "changed": False},
